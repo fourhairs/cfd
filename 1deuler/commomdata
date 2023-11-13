@@ -1,0 +1,24 @@
+module commondata
+    implicit none
+    
+    real*8, parameter :: CFL = 0.5d0
+    real*8, parameter :: gamma = 1.4d0
+    real*8, parameter :: pi = 3.1415926535898d0
+    real*8, parameter :: eps = 1.0d-40
+    real*8, parameter :: epsilon = 1.0d-10
+    
+    integer :: FLG_prob, im, FLG_split, FLG_character, FLG_order, FLG_recon
+    integer :: FLG_bound    ! bound=1--自由边界条件;  bound=2--反射边界条件
+    
+    real*8, allocatable :: xr(:), var(:,:), v0(:,:), v1(:,:)
+    real*8, allocatable :: fp(:,:), fm(:,:), fpc(:,:), fmc(:,:)
+    real*8, allocatable :: fluxc(:,:), flux(:,:)
+    ! var--initial varibles--rho, u, p, c
+    ! v0,v1--flux variables--rho, rho*u, E
+    ! fp--positive flux； fm--negative flux
+    ! fpc--positive flux character transform;  fmc-negative flux character transform
+    ! fluxc--character space flux;  
+    
+    real*8 :: t_end, xlong, dx, dt, tn
+    
+end module commondata
