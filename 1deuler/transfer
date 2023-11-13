@@ -1,0 +1,58 @@
+subroutine characteristic_transform
+    use commondata
+    implicit none
+    integer :: i, k
+    real*8 :: r1, u1, H1, sr1, r2, u2, H2, sr2
+    real*8 :: r0, u0, H0, c0, tem1, tem2
+    real*8 :: fpx, fmx
+    real*8 :: mats(3,3), matd(3,3)
+    ! mats--right eigenmatrix of A---S;  matd--left eigenmatrix of A----D
+    
+    do i = -1, im
+        ! Roe average
+        r1 = var(i,1);  r2 = var(i+1,1)
+        u1 = var(i,2);  u2 = var(i+1,2)
+        H1 = gamma/(gamma-1.d0)*var(i,3)/r1 + 0.5d0*u1**2
+        H2 = gamma/(gamma-1.d0)*var(i+1,3)/r2 + 0.5d0*u2**2
+        sr1 = sqrt(abs(r1)); sr2 = sqrt(abs(r2))
+        r0 = sr1 + sr2
+        u0 = ( sr1*u1 + sr2*u2 )/r0
+        H0 = ( sr1*H1 + sr2*H2 )/r0
+        c0 = sqrt(abs((gamma-1.d0)*(H0-0.5d0*u0**2)))
+        ! S--R(A)
+        tem1 = (gamma-1.d0)/c0
+        mats(1,1) = 0.50*u0*u0 - c0*c0/(gamma-1.d0)
+        mats(1,2) = -u0
+        mats(1,3) = 1.d0
+        mats(2,1) = -u0 - 0.5d0*tem1*u0*u0
+        mats(2,2) = 1.d0 + tem1*u0
+        mats(2,3) = -tem1
+        mats(3,1) = -u0 + 0.5d0*tem1*u0*u0
+        mats(3,2) = 1.d0 - tem1*u0
+        mats(3,3) = tem1
+        ! D--L(A)
+        tem2 = (gamma-1.d0)/c0/c0
+        matd(1,1) = -tem2
+        matd(1,2) = -0.5d0/c0
+        matd(1,3) = 0.5d0/c0
+        matd(2,1) = -tem2*u0
+        matd(2,2) = -0.5d0*(u0-c0)/c0
+        matd(2,3) = 0.5d0*(u0+c0)/c0
+        matd(3,1) = -0.5d0*tem2*u0*u0
+        matd(3,2) = -0.5d0*( 0.5d0*u0*u0 + 1.d0/tem2 - u0*c0 )/c0
+        matd(3,3) = 0.5d0*( 0.5d0*u0*u0 + 1.d0/tem2 + u0*c0 )/c0
+        do k = 1, 3
+            ! Transfer
+            fpc(i-3:i+3,k) = mats(k,1)*fp(i-3:i+3,1) + mats(k,2)*fp(i-3:i+3,2) + mats(k,3)*fp(i-3:i+3,3)
+            fmc(i-2:i+4,k) = mats(k,1)*fm(i-2:i+4,1) + mats(k,2)*fm(i-2:i+4,2) + mats(k,3)*fm(i-2:i+4,3)
+            
+                    call teno5_p( fpc(i-2:i+2,k), fpx )
+                    call teno5_m( fmc(i-1:i+3,k), fmx )               
+            fluxc(i,k) = fpx + fmx
+        end do
+        ! Converse
+        flux(i,:) = matd(:,1)*fluxc(i,1) + matd(:,2)*fluxc(i,2) + matd(:,3)*fluxc(i,3)
+    end do
+    
+end subroutine characteristic_transform
+!
