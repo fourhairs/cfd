@@ -1,1 +1,25 @@
-
+subroutine roe( roe0, roe1, roe_u )
+    use commondata
+    implicit none
+        
+    real*8 :: roe0(3), roe1(3), roe_u(3)
+    real*8 :: rl, ul, pl, hl, sl
+    real*8 :: rr, ur, pr, hr, sr
+    real*8 :: ra, ua, pa, ha, ea
+    
+    rl = roe0(1);  ul = roe0(2);  pl = roe0(3);  sl = sqrt(abs(rl))
+    hl = 0.5d0*ul**2 + gamma/(gamma-1.0d0)*pl/rl
+    rr = roe1(1);  ur = roe1(2);  pr = roe1(3);  sr = sqrt(abs(rr))
+    hr = 0.5d0*ur**2 + gamma/(gamma-1.0d0)*pr/rr
+    ra = ( 0.5d0*(sl+sr) )**2
+    ua = ( sl*ul + sr*ur )/( sl+sr )
+    ha = ( sl*hl + sr*hr )/( sl+sr )
+    pa = ra*( ha - 0.5d0*ua**2 )*(gamma-1.0d0)/gamma
+    ea = pa/(gamma-1.0d0) + 0.5d0*ra*ua**2
+    
+    roe_u(1) = ra*ua
+    roe_u(2) = ra*ua**2 + pa
+    roe_u(3) = ua*( ea+pa )
+    
+    return
+    end subroutine roe
