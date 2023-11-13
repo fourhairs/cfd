@@ -1,0 +1,33 @@
+subroutine ini
+    use commondata
+    implicit none
+    integer :: i
+    
+    im=200
+    
+    allocate( xr(-4:im+4), var(-4:im+4,4), v0(-4:im+4,3), v1(-4:im+4,3) )
+    allocate( fp(-4:im+4,3), fm(-4:im+4,3), fpc(-4:im+4,3), fmc(-4:im+4,3) )
+    allocate( fluxc(-1:im,3), flux(-1:im,3) )
+    
+    t_end = 1.0d0
+        xlong = 5.0d0;  dx = xlong/(real(im)/2)
+        do i = -4, im+4
+            xr(i) = -xlong + real(i)*dx
+            if( xr(i)<0 ) then
+                var(i,1) = 1.0d0
+                var(i,2) = -2.0d0
+                var(i,3) = 0.4d0
+                var(i,4) = sqrt(gamma*var(i,3)/var(i,1))
+            else
+                var(i,1) = 1.0d0
+                var(i,2) = 2.0d0
+                var(i,3) = 0.4d0
+                var(i,4) = sqrt(gamma*var(i,3)/var(i,1))
+            end if
+        end do 
+    
+    v1(:,1) = var(:,1)
+    v1(:,2) = var(:,1)*var(:,2)
+    v1(:,3) = var(:,3)/(gamma-1.0d0) + 0.5d0*var(:,1)*var(:,2)**2
+    
+end subroutine ini
