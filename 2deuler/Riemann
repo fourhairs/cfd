@@ -1,0 +1,562 @@
+program main
+implicit none
+include 'omp_lib.h'
+    real(8) gama
+    real(8) tt,t2                               !computation time tt and the termination time t2
+    real(8) cfln,dt                             !cfl number and time step
+    integer mx,my                               !total grid points of x-wise and y-wise
+    integer nstep                               !calculation step counting
+    integer bl                                  !l boundary layer
+    real(8) xi0,xi1,yi0,yi1                     !computational domain
+    real(8) dx,dy                               !for uniform grid dx,dy
+    real(8),allocatable::x(:,:),y(:,:)        !restore the grid points
+    real(8),allocatable::xc(:,:),yc(:,:)      !restore the ceter of mesh
+    real(8),allocatable::qu(:,:,:)
+    real(8) start,finish
+    open(106,file='cputime.txt')
+    call cpu_time(start)
+    gama=1.4d0
+    cfln=0.5d0
+    t2 = 0.8d0
+    bl=3         !-2 for 3rd WENO; 3 for 5-th WENO
+    write(*,*) 'Input mx,my:'
+    read(*,*) mx,my
+    allocate(x(0:mx,0:my),y(0:mx,0:my)) !from 0 to mx, 0 to my
+    allocate(xc(mx,my),yc(mx,my))  !from 1 to mx, 1 to my    
+    xi0=0.d0
+    xi1=1.d0
+    yi0=0.d0
+    yi1=1.d0
+    dx=(xi1-xi0)/dble(mx)
+    dy=(yi1-yi0)/dble(my)
+    call grid(x,y,mx,my,bl,xi0,yi0,dx,dy,xc,yc)
+    allocate(qu(4,-bl:mx+bl,-bl:my+bl))   !boundary 1-0,2-(-1),mx-mx+1
+    call initial(x,y,qu,mx,my,bl,gama)
+    tt=0.d0
+    nstep=0
+    do while(tt<t2)    
+        call cfl(dx,dy,qu,mx,my,bl,gama,cfln,dt)
+        tt=tt+dt
+        nstep=nstep+1
+        if(tt>t2) then
+            tt=tt-dt
+            dt=t2-tt
+            tt=tt+dt
+        endif
+        write(*,*) nstep,tt,dt        
+        call rk4rt5z(dx,dy,qu,mx,my,bl,gama,dt,tt)       
+    enddo
+    call output(x,y,mx,my,bl,qu,gama)
+    deallocate(x,y,xc,yc,qu)
+    call cpu_time(finish)
+    write(106,200) finish-start
+200 format(e12.4)   
+end
+!--------------------------------------------------------------------------------------
+subroutine grid(x,y,mx,my,bl,x0,y0,dx,dy,xc,yc)
+implicit none
+!state
+!calculate from 0 to mx,0 to my
+!0,mx;0,my are the four boundary layer
+    integer mx,my,bl
+    integer i,j
+    real(8) x0,y0,dx,dy
+    real(8) x(0:mx,0:my),y(0:mx,0:my)
+    real(8) xc(mx,my),yc(mx,my)
+
+    do j=0,my
+        do i=0,mx
+            x(i,j)=x0+i*dx
+            y(i,j)=y0+j*dy
+        enddo
+    enddo
+
+    do j=1,my
+        do i=1,mx
+            xc(i,j)=x0-dx/2+i*dx
+            yc(i,j)=y0-dy/2+j*dy
+        enddo
+    enddo
+end
+!-----------------------------------------------------------------------------------------
+subroutine cfl(dx,dy,qu,mx,my,bl,gama,cfln,dt)
+implicit none
+    integer mx,my,bl
+    integer i,j
+    real(8) dx,dy
+    real(8) qu(4,-bl:mx+bl,-bl:my+bl)
+    real(8) rho,u,v,p,cs,gama,dt,cfln
+
+    real(8) maxx,maxy,temp
+    real(8) deltx,delty
+
+    maxx=0.d0
+    maxy=0.d0
+    do j=0,my
+        do i=0,mx
+            rho=qu(1,i,j)
+            u=qu(2,i,j)/rho
+            v=qu(3,i,j)/rho
+            p=(gama-1.d0)*(qu(4,i,j)-0.5d0*rho*(u*u+v*v))
+            cs=dsqrt(gama*p/rho)
+            temp=dabs(u)+cs
+            if(maxx<temp) maxx=temp
+            temp=dabs(v)+cs
+            if(maxy<temp) maxy=temp
+        enddo
+    enddo
+    deltx=dx/maxx
+    delty=dy/maxy
+
+    dt=cfln*deltx*delty/(deltx+delty)
+end
+!-----------------------------------------------------------------------------------------
+subroutine initial(x,y,qu,mx,my,bl,gama)
+implicit none
+    integer mx,my,bl
+    integer i,j,k
+    real(8) qu(4,-bl:mx+bl,-bl:my+bl)
+    real(8) x(0:mx,0:my),y(0:mx,0:my)
+    real(8) rou1,u1,v1,p1,rou2,u2,v2,p2,ms      
+    real(8) ma     !for circ flow initial
+    real(8) pointx,pointy,radius
+    real(8) tempe,gama,tt,dx,dy,pi
+    
+!begin-     
+    do i=0,mx
+	do j=0,my 
+	if (x(i,j).lt.0.5d0 .and. y(i,j).lt. 0.5d0) then
+	rou1 = 1.d0
+	u1 = -0.75d0
+	v1 = 0.5d0	
+	p1 = 1.d0
+	qu(1,i,j)=rou1
+	qu(2,i,j)=rou1*u1
+	qu(3,i,j)=rou1*v1
+	qu(4,i,j)=p1/(gama-1.d0)+0.5d0*rou1*(u1*u1+v1*v1)
+	elseif (x(i,j).le.0.5d0 .and. y(i,j).ge. 0.5d0) then         
+	rou1 = 2.d0
+	u1 = 0.75d0
+	v1 = 0.5d0
+	p1 = 1.d0 
+	qu(1,i,j)=rou1
+	qu(2,i,j)=rou1*u1
+	qu(3,i,j)=rou1*v1
+	qu(4,i,j)=p1/(gama-1.d0)+0.5d0*rou1*(u1*u1+v1*v1)
+	elseif (x(i,j).gt.0.5d0 .and. y(i,j).gt. 0.5d0) then         
+	rou1 = 1.d0
+	u1 = 0.75d0
+	v1 = -0.5d0
+	p1 = 1.d0 
+	qu(1,i,j)=rou1
+	qu(2,i,j)=rou1*u1
+	qu(3,i,j)=rou1*v1
+	qu(4,i,j)=p1/(gama-1.d0)+0.5d0*rou1*(u1*u1+v1*v1)
+	else
+	rou1 = 3.d0
+	u1 = -0.75d0
+	v1 = -0.5d0
+	p1 = 1.d0 
+	qu(1,i,j)=rou1
+	qu(2,i,j)=rou1*u1
+	qu(3,i,j)=rou1*v1
+	qu(4,i,j)=p1/(gama-1.d0)+0.5d0*rou1*(u1*u1+v1*v1)
+	endif 
+    enddo
+    enddo
+!end
+end subroutine initial
+!-----------------------------------------------------------------------------------------
+subroutine boundary(qu,mx,my,bl,gama,tt,dx,dy)
+implicit none
+    integer mx,my,bl
+    integer i,j,k
+    real(8) qu(4,-bl:mx+bl,-bl:my+bl)
+    real(8) rou,u,v,u1,v1
+    real(8) p,gama,tt,dx,dy
+    real(8) rou1,p1,rou2,u2,p2,ms
+    real(8) pointx,pointy,pointdx,pointdy       !for doublema 
+
+!begin-
+    !j dir
+   do i=0,mx
+        do j=1,bl
+            qu(1,i,-j)=qu(1,i,j)
+            qu(2,i,-j)=qu(2,i,j)
+            qu(3,i,-j)=qu(3,i,j)
+            qu(4,i,-j)=qu(4,i,j)       
+            qu(1,i,my+j)=qu(1,i,my-j)
+            qu(2,i,my+j)=qu(2,i,my-j)
+            qu(3,i,my+j)=qu(3,i,my-j)
+            qu(4,i,my+j)=qu(4,i,my-j)
+        enddo
+    enddo
+    !i方向
+    do j=0,my
+        do i=1,bl
+            qu(1,-i,j) = qu(1,i,j)
+            qu(2,-i,j) = qu(2,i,j)
+            qu(3,-i,j) = qu(3,i,j)
+            qu(4,-i,j) = qu(4,i,j)       
+            qu(1,mx+i,j) = qu(1,mx-i,j)
+            qu(2,mx+i,j) = qu(2,mx-i,j)
+            qu(3,mx+i,j) = qu(3,mx-i,j)
+            qu(4,mx+i,j) = qu(4,mx-i,j)
+        enddo
+    enddo
+!end-
+end subroutine boundary
+!-----------------------------------------------------------------------------------------
+subroutine weno5z(dx,dy,pfl,mfr,pgl,mgr,rhx,rhy,mx,my,bl)
+implicit none
+include 'omp_lib.h'
+    integer mx,my,bl,i,j,k,ii 
+    real(8) pfl(4,-bl:mx+bl,-bl:my+bl),mfr(4,-bl:mx+bl,-bl:my+bl)
+    real(8) pgl(4,-bl:mx+bl,-bl:my+bl),mgr(4,-bl:mx+bl,-bl:my+bl)
+    real(8) rhx(4,-1:mx,0:my),rhy(4,0:mx,-1:my)
+    real(8) c(0:2),c1,c2,ll,dx,dy,def(4),eta(3),ts,xd
+    real(8) ee,gam(0:2),kai(0:2),ct,ss
+    real(8) q(0:2),is(0:2),w(0:2),det(0:2),tao,rfp,rfm
+    c(0)=0.1d0     
+    c(1)=0.6d0
+    c(2)=0.3d0
+    c1=13.d0/12.d0        
+    c2=1.d0/4.d0
+    ee=1d-40  
+    ct=1d-5
+!$omp parallel private(i,j,k,q,is,alpha,beta,gamma,w,rfp,rfm,tao,ii,ss,tt,dd)
+    !$omp do
+    do j=0,my
+        do i=-1,mx
+        do k=1,4
+        q(0)=1.d0/3.d0*pfl(k,i-2,j)-7.d0/6.d0*pfl(k,i-1,j)+11.d0/6.d0*pfl(k,i,j)
+        q(1)=-1.d0/6.d0*pfl(k,i-1,j)+5.d0/6.d0*pfl(k,i,j)+1.d0/3.d0*pfl(k,i+1,j)
+        q(2)=1.d0/3.d0*pfl(k,i,j)+5.d0/6.d0*pfl(k,i+1,j)-1.d0/6.d0*pfl(k,i+2,j)       
+        is(0)=c1*(pfl(k,i-2,j)-2.d0*pfl(k,i-1,j)+pfl(k,i,j))**2+&
+            c2*(pfl(k,i-2,j)-4.d0*pfl(k,i-1,j)+3.d0*pfl(k,i,j))**2
+        is(1)=c1*(pfl(k,i-1,j)-2.d0*pfl(k,i,j)+pfl(k,i+1,j))**2+&
+            c2*(pfl(k,i-1,j)-pfl(k,i+1,j))**2
+        is(2)=c1*(pfl(k,i,j)-2.d0*pfl(k,i+1,j)+pfl(k,i+2,j))**2+&
+            c2*(3.d0*pfl(k,i,j)-4.d0*pfl(k,i+1,j)+pfl(k,i+2,j))**2	
+	    tao=abs(is(0)-2.d0*is(1)+is(2))
+        do ii=0,2
+     	gam(ii)=(1.d0+tao/(is(ii)+ee))**6 
+	    enddo
+        do ii=0,2
+        kai(ii)=gam(ii)/(gam(0)+gam(1)+gam(2))
+        enddo
+        ss=min(ct,tao)
+        do ii=0,2        
+        if(kai(ii).lt.ss)then
+        det(ii)=0.d0
+        else
+        det(ii)=c(ii)
+        endif        
+        enddo    
+        do ii=0,2
+        w(ii)=det(ii)/(det(0)+det(1)+det(2))
+        enddo
+        rfp=w(0)*q(0)+w(1)*q(1)+w(2)*q(2)
+
+        q(0)=1.d0/3.d0*mfr(k,i+3,j)-7.d0/6.d0*mfr(k,i+2,j)+11.d0/6.d0*mfr(k,i+1,j)
+        q(1)=-1.d0/6.d0*mfr(k,i+2,j)+5.d0/6.d0*mfr(k,i+1,j)+1.d0/3.d0*mfr(k,i,j)
+        q(2)=1.d0/3.d0*mfr(k,i+1,j)+5.d0/6.d0*mfr(k,i,j)-1.d0/6.d0*mfr(k,i-1,j)       
+        is(0)=c1*(mfr(k,i+3,j)-2.d0*mfr(k,i+2,j)+mfr(k,i+1,j))**2+&
+            c2*(mfr(k,i+3,j)-4.d0*mfr(k,i+2,j)+3.d0*mfr(k,i+1,j))**2
+        is(1)=c1*(mfr(k,i+2,j)-2.d0*mfr(k,i+1,j)+mfr(k,i,j))**2+&
+            c2*(mfr(k,i+2,j)-mfr(k,i,j))**2
+        is(2)=c1*(mfr(k,i+1,j)-2.d0*mfr(k,i,j)+mfr(k,i-1,j))**2+&
+            c2*(3.d0*mfr(k,i+1,j)-4.d0*mfr(k,i,j)+mfr(k,i-1,j))**2
+        tao=abs(is(0)-2.d0*is(1)+is(2))
+        do ii=0,2
+     	gam(ii)=(1.d0+tao/(is(ii)+ee))**6 
+	    enddo
+        do ii=0,2
+        kai(ii)=gam(ii)/(gam(0)+gam(1)+gam(2))
+        enddo
+        ss=min(ct,tao)
+        do ii=0,2        
+        if(kai(ii).lt.ss)then
+        det(ii)=0.d0
+        else
+        det(ii)=c(ii)
+        endif        
+        enddo    
+        do ii=0,2
+        w(ii)=det(ii)/(det(0)+det(1)+det(2))
+        enddo
+        rfm=w(0)*q(0)+w(1)*q(1)+w(2)*q(2)
+        rhx(k,i,j)=rfp+rfm
+        enddo
+        enddo
+    enddo
+    !$omp end do
+    !$omp do
+    do j=-1,my
+        do i=0,mx
+        do k=1,4
+        q(0)=1.d0/3.d0*pgl(k,i,j-2)-7.d0/6.d0*pgl(k,i,j-1)+11.d0/6.d0*pgl(k,i,j)
+        q(1)=-1.d0/6.d0*pgl(k,i,j-1)+5.d0/6.d0*pgl(k,i,j)+1.d0/3.d0*pgl(k,i,j+1)
+        q(2)=1.d0/3.d0*pgl(k,i,j)+5.d0/6.d0*pgl(k,i,j+1)-1.d0/6.d0*pgl(k,i,j+2)
+        is(0)=c1*(pgl(k,i,j-2)-2.d0*pgl(k,i,j-1)+pgl(k,i,j))**2+&
+            c2*(pgl(k,i,j-2)-4.d0*pgl(k,i,j-1)+3.d0*pgl(k,i,j))**2
+        is(1)=c1*(pgl(k,i,j-1)-2.d0*pgl(k,i,j)+pgl(k,i,j+1))**2+&
+            c2*(pgl(k,i,j-1)-pgl(k,i,j+1))**2
+        is(2)=c1*(pgl(k,i,j)-2.d0*pgl(k,i,j+1)+pgl(k,i,j+2))**2+&
+            c2*(3.d0*pgl(k,i,j)-4.d0*pgl(k,i,j+1)+pgl(k,i,j+2))**2
+        tao=abs(is(0)-2.d0*is(1)+is(2))
+        do ii=0,2
+     	gam(ii)=(1.d0+tao/(is(ii)+ee))**6 
+	    enddo
+        do ii=0,2
+        kai(ii)=gam(ii)/(gam(0)+gam(1)+gam(2))
+        enddo
+        ss=min(ct,tao)
+        do ii=0,2        
+        if(kai(ii).lt.ss)then
+        det(ii)=0.d0
+        else
+        det(ii)=c(ii)
+        endif        
+        enddo    
+        do ii=0,2
+        w(ii)=det(ii)/(det(0)+det(1)+det(2))
+        enddo
+        rfp=w(0)*q(0)+w(1)*q(1)+w(2)*q(2)
+
+        q(0)=1.d0/3.d0*mgr(k,i,j+3)-7.d0/6.d0*mgr(k,i,j+2)+11.d0/6.d0*mgr(k,i,j+1)
+        q(1)=-1.d0/6.d0*mgr(k,i,j+2)+5.d0/6.d0*mgr(k,i,j+1)+1.d0/3.d0*mgr(k,i,j)
+        q(2)=1.d0/3.d0*mgr(k,i,j+1)+5.d0/6.d0*mgr(k,i,j)-1.d0/6.d0*mgr(k,i,j-1)       
+        is(0)=c1*(mgr(k,i,j+3)-2.d0*mgr(k,i,j+2)+mgr(k,i,j+1))**2+&
+            c2*(mgr(k,i,j+3)-4.d0*mgr(k,i,j+2)+3.d0*mgr(k,i,j+1))**2
+        is(1)=c1*(mgr(k,i,j+2)-2.d0*mgr(k,i,j+1)+mgr(k,i,j))**2+&
+            c2*(mgr(k,i,j+2)-mgr(k,i,j))**2
+        is(2)=c1*(mgr(k,i,j+1)-2.d0*mgr(k,i,j)+mgr(k,i,j-1))**2+&
+            c2*(3.d0*mgr(k,i,j+1)-4.d0*mgr(k,i,j)+mgr(k,i,j-1))**2
+        tao=abs(is(0)-2.d0*is(1)+is(2))
+        do ii=0,2
+     	gam(ii)=(1.d0+tao/(is(ii)+ee))**6 
+	    enddo
+        do ii=0,2
+        kai(ii)=gam(ii)/(gam(0)+gam(1)+gam(2))
+        enddo
+        ss=min(ct,tao)
+        do ii=0,2        
+        if(kai(ii).lt.ss)then
+        det(ii)=0.d0
+        else
+        det(ii)=c(ii)
+        endif        
+        enddo    
+        do ii=0,2
+        w(ii)=det(ii)/(det(0)+det(1)+det(2))
+        enddo
+		rfm=w(0)*q(0)+w(1)*q(1)+w(2)*q(2)
+        rhy(k,i,j)=rfp+rfm
+        enddo
+        enddo
+    enddo
+    !$omp end do
+!$omp end parallel
+end subroutine weno5z
+!-----------------------------------------------------------------------------------------
+subroutine Laxsplit(qu,mx,my,bl,gama,pfl,mfr,pgl,mgr)
+implicit none
+include 'omp_lib.h'
+    integer mx,my,bl
+    integer i,j,k
+    real(8) gama
+    real(8) qu(4,-bl:mx+bl,-bl:my+bl)
+    !for the Steger-Warming flux split
+    !x-wise
+    real(8) pfl(4,-bl:mx+bl,-bl:my+bl)
+    real(8) mfr(4,-bl:mx+bl,-bl:my+bl)
+    !-y-wise
+    real(8) pgl(4,-bl:mx+bl,-bl:my+bl)
+    real(8) mgr(4,-bl:mx+bl,-bl:my+bl)
+
+    real(8) rho,u,v,p,cs,am1,am
+
+    real(8) fu(4),im(4),lamm(4)
+
+    real(8) ee
+
+    ee=1d-15
+
+    !x-wise-splitting
+!$omp parallel private(i,j,rho,u,v,p,cs,fu,im,am,k)
+    !$omp do
+    do j=0,my
+        do i=-bl,mx+bl
+        rho=qu(1,i,j)
+        u=qu(2,i,j)/rho
+        v=qu(3,i,j)/rho
+        p=(gama-1.d0)*(qu(4,i,j)-0.5d0*rho*(u*u+v*v))
+        cs=dsqrt(gama*p/rho)         
+
+        fu(1)=rho*u
+	    fu(2)=rho*u**2+p
+	    fu(3)=rho*u*v
+	    fu(4)=u*(qu(4,i,j)+p)
+	    
+	    im(1)=max(ee,dabs(u-cs))
+	    im(2)=max(ee,dabs(u))
+	    im(3)=im(2)
+	    im(4)=max(ee,dabs(u+cs))
+	    am1=max(im(1),im(2),im(4))
+        am=max(0.d0,am1)
+	    do k=1,4
+        pfl(k,i,j)=(fu(k)+am*qu(k,i,j))/2.d0           
+        mfr(k,i,j)=(fu(k)-am*qu(k,i,j))/2.d0  
+        enddo
+        enddo
+    enddo
+    !$omp end do
+    !y-wise-splitting
+    !$omp do
+    do i=0,mx
+        do j=-bl,my+bl
+        rho=qu(1,i,j)
+        u=qu(2,i,j)/rho
+        v=qu(3,i,j)/rho
+        p=(gama-1.d0)*(qu(4,i,j)-0.5d0*rho*(u*u+v*v))
+        cs=dsqrt(gama*p/rho)            
+
+        fu(1)=rho*v
+	    fu(2)=rho*u*v
+	    fu(3)=rho*v*v+p
+	    fu(4)=v*(qu(4,i,j)+p)
+	    
+	    im(1)=max(ee,dabs(v-cs))
+	    im(2)=max(ee,dabs(v))
+	    im(3)=im(2)
+	    im(4)=max(ee,dabs(v+cs))
+	    am1=max(im(1),im(2),im(4))
+        am=max(0.d0,am1)
+	    do k=1,4
+        pgl(k,i,j)=(fu(k)+am*qu(k,i,j))/2.d0           
+        mgr(k,i,j)=(fu(k)-am*qu(k,i,j))/2.d0           
+	    enddo
+        enddo
+    enddo
+    !$omp end do
+!$omp end parallel
+end
+!-----------------------------------------------------------------------------------------
+subroutine rk4rt5z(dx,dy,qu,mx,my,bl,gama,dt,tt)
+implicit none
+	include 'omp_lib.h'
+	integer mx,my,bl
+	integer i,j,k
+	real(8) qu(4,-bl:mx+bl,-bl:my+bl)
+	real(8) gama,dx,dy,dt,tt        
+!for the runge kutta time iteration
+	real(8) unf(4,-bl:mx+bl,-bl:my+bl)
+	real(8) uns(4,-bl:mx+bl,-bl:my+bl)	
+	real(8) unt(4,-bl:mx+bl,-bl:my+bl)
+!for the Steger-Warming flux split
+!x-wise
+	real(8) pfl(4,-bl:mx+bl,-bl:my+bl)
+	real(8) mfr(4,-bl:mx+bl,-bl:my+bl)
+!-y-wise
+	real(8) pgl(4,-bl:mx+bl,-bl:my+bl)
+	real(8) mgr(4,-bl:mx+bl,-bl:my+bl)
+!rhside
+	real(8) rhx(4,-1:mx,0:my) !rhx=\partial{f/x}(i+1/2)
+	real(8) rhy(4,0:mx,-1:my) !rhy=\partial{g/y}{j+1/2}
+!---------------rk3-1----------------------------------------------------
+	call boundary(qu,mx,my,bl,gama,tt,dx,dy)    
+	call Laxsplit(qu,mx,my,bl,gama,pfl,mfr,pgl,mgr)
+	call weno5z(dx,dy,pfl,mfr,pgl,mgr,rhx,rhy,mx,my,bl)
+!$omp parallel private(i,j,k)
+!$omp do
+	do j=0,my
+        do i=0,mx
+	do k=1,4
+	unf(k,i,j)=qu(k,i,j)-dt*((rhx(k,i,j)-rhx(k,i-1,j))/dx&
+		+(rhy(k,i,j)-rhy(k,i,j-1))/dy)
+	enddo	
+        enddo
+	enddo
+!$omp end do
+!$omp end parallel
+!---------------rk3-2----------------------------------------------------
+	call boundary(unf,mx,my,bl,gama,tt,dx,dy)    
+	call Laxsplit(unf,mx,my,bl,gama,pfl,mfr,pgl,mgr)
+	call weno5z(dx,dy,pfl,mfr,pgl,mgr,rhx,rhy,mx,my,bl)
+!$omp parallel private(i,j,k)
+!$omp do
+	do j=0,my
+        do i=0,mx
+	do k=1,4
+	uns(k,i,j)=(3.d0*qu(k,i,j)+unf(k,i,j))/4.d0-&
+		dt/4.d0*((rhx(k,i,j)-rhx(k,i-1,j))/dx&
+		+(rhy(k,i,j)-rhy(k,i,j-1))/dy)
+	enddo	
+        enddo
+	enddo
+!$omp end do
+!$omp end parallel
+!----------------------------------------------------------------------------
+	call boundary(uns,mx,my,bl,gama,tt,dx,dy)    
+	call Laxsplit(uns,mx,my,bl,gama,pfl,mfr,pgl,mgr)
+	call weno5z(dx,dy,pfl,mfr,pgl,mgr,rhx,rhy,mx,my,bl)
+!$omp parallel private(i,j,k)
+!$omp do    
+	do j=0,my
+        do i=0,mx
+	do k=1,4
+	unt(k,i,j)=(qu(k,i,j)+2.d0*uns(k,i,j))/3.d0-&
+		2.d0*dt/3.d0*((rhx(k,i,j)-rhx(k,i-1,j))/dx+&
+		(rhy(k,i,j)-rhy(k,i,j-1))/dy)
+	enddo	
+        enddo
+	enddo
+!$omp end do
+!$omp do
+	do j=0,my
+        do i=0,mx
+	do k=1,4
+	qu(k,i,j)=unt(k,i,j)
+	enddo
+        enddo
+	enddo
+!$omp end do
+!$omp end parallel
+end
+!-----------------------------------------------------------------------------------------
+subroutine output(x,y,mx,my,bl,qu,gama)
+implicit none
+    integer mx,my,bl
+    integer i,j,k
+    real(8) x(0:mx,0:my),y(0:mx,0:my)
+    real(8) qu(4,-bl:mx+bl,-bl:my+bl)
+    real(8) uu(4,0:mx,0:my)
+    real(8) rho,u,v,p,gama
+    character(len=30) string
+
+    do j=0,my
+        do i=0,mx
+            do k=1,4
+                uu(k,i,j)=qu(k,i,j)
+            enddo
+        enddo
+    enddo   
+
+    write(string,'(A8,i3,A4)') 'wenoz',mx,'.dat'
+    open(22,file=string,status='replace')
+        write(22,*) 'TITLE="Euler"'
+        write(22,*) 'VARIABLES="x","y","rou","p","u","v"'
+        write(22,*) 'ZONE I=',mx+1,'J=',my+1,'F=POINT'
+        
+        do j=0,my
+            do i=0,mx
+                rho=uu(1,i,j)
+                u=uu(2,i,j)/rho
+                v=uu(3,i,j)/rho
+                p=(gama-1.d0)*(uu(4,i,j)-0.5d0*rho*(u*u+v*v))
+                write(22,"(6d15.6)") x(i,j),y(i,j),rho,p,u,v
+            enddo
+        enddo
+     close(22)     
+end
